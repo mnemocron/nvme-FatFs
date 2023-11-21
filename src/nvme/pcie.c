@@ -1,9 +1,8 @@
 /*
-ZU+ PL PCIe (XDMA Bridge) Driver
-*/
+ ZU+ PL PCIe (XDMA Bridge) Driver
+ */
 
 // Include Headers -----------------------------------------------------------------------------------------------------
-
 #include "pcie.h"
 #include "xdmapcie.h"
 #include "xil_printf.h"
@@ -58,14 +57,12 @@ XDmaPcie XdmaPcieInstance;
 
 // Public Function Definitions -----------------------------------------------------------------------------------------
 
-void pcieInit(void)
-{
+void pcieInit(void) {
 	int pcieStatus;
 
 	/* Initialize Root Complex */
 	pcieStatus = PcieInitRootComplex(&XdmaPcieInstance, XDMAPCIE_DEVICE_ID);
-	if (pcieStatus != XST_SUCCESS)
-	{
+	if (pcieStatus != XST_SUCCESS) {
 		xil_printf("Warning: PCIe initialization failed.\r\n");
 		return;
 	}
@@ -76,42 +73,39 @@ void pcieInit(void)
 	return;
 }
 
-void pcieDeinit(void)
-{
+void pcieDeinit(void) {
 
 }
 
 // Private Function Definitions ----------------------------------------------------------------------------------------
 
-int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId)
-{
+int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId) {
 	int Status;
 	u32 HeaderData;
 	u32 InterruptMask;
-	u8  BusNumber;
-	u8  DeviceNumber;
-	u8  FunNumber;
-	u8  PortNumber;
+	u8 BusNumber;
+	u8 DeviceNumber;
+	u8 FunNumber;
+	u8 PortNumber;
 
 	XDmaPcie_Config *ConfigPtr;
 
 	ConfigPtr = XDmaPcie_LookupConfig(DeviceId);
 
 	Status = XDmaPcie_CfgInitialize(XdmaPciePtr, ConfigPtr,
-						ConfigPtr->BaseAddress);
+			ConfigPtr->BaseAddress);
 
 	if (Status != XST_SUCCESS) {
 		xil_printf("Failed to initialize PCIe Root Complex"
-							"IP Instance\r\n");
+				"IP Instance\r\n");
 		return XST_FAILURE;
 	}
 
-	if(!XdmaPciePtr->Config.IncludeRootComplex) {
+	if (!XdmaPciePtr->Config.IncludeRootComplex) {
 		xil_printf("Failed to initialize...XDMA PCIE is configured"
-							" as endpoint\r\n");
+				" as endpoint\r\n");
 		return XST_FAILURE;
 	}
-
 
 	/* See what interrupts are currently enabled */
 	XDmaPcie_GetEnabledInterrupts(XdmaPciePtr, &InterruptMask);
@@ -120,14 +114,13 @@ int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId)
 	/* Make sure all interrupts disabled. */
 	XDmaPcie_DisableInterrupts(XdmaPciePtr, XDMAPCIE_IM_ENABLE_ALL_MASK);
 
-
 	/* See what interrupts are currently pending */
 	XDmaPcie_GetPendingInterrupts(XdmaPciePtr, &InterruptMask);
 	// xil_printf("Interrupts currently pending are %8X\r\n", InterruptMask);
 
 	/* Just if there is any pending interrupt then clear it.*/
 	XDmaPcie_ClearPendingInterrupts(XdmaPciePtr,
-						XDMAPCIE_ID_CLEAR_ALL_MASK);
+	XDMAPCIE_ID_CLEAR_ALL_MASK);
 
 	/*
 	 * Read enabled interrupts and pending interrupts
@@ -145,13 +138,13 @@ int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId)
 	int Retries;
 	Status = FALSE;
 	/* check if the link is up or not */
-        for (Retries = 0; Retries < XDMAPCIE_LINK_WAIT_MAX_RETRIES; Retries++) {
-		if (XDmaPcie_IsLinkUp(XdmaPciePtr)){
+	for (Retries = 0; Retries < XDMAPCIE_LINK_WAIT_MAX_RETRIES; Retries++) {
+		if (XDmaPcie_IsLinkUp(XdmaPciePtr)) {
 			Status = TRUE;
 		}
-                usleep(XDMAPCIE_LINK_WAIT_USLEEP_MIN);
+		usleep(XDMAPCIE_LINK_WAIT_USLEEP_MIN);
 	}
-	if (Status != TRUE ) {
+	if (Status != TRUE) {
 		xil_printf("Warning: PCIe link is not up.\r\n");
 		return XST_FAILURE;
 	}
@@ -161,26 +154,25 @@ int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId)
 	/*
 	 * Read back requester ID.
 	 */
-	XDmaPcie_GetRequesterId(XdmaPciePtr, &BusNumber,
-				&DeviceNumber, &FunNumber, &PortNumber);
+	XDmaPcie_GetRequesterId(XdmaPciePtr, &BusNumber, &DeviceNumber, &FunNumber,
+			&PortNumber);
 
 	xil_printf("Bus Number: %02X\r\n"
 			"Device Number: %02X\r\n"
-				"Function Number: %02X\r\n"
-					"Port Number: %02X\r\n",
-			BusNumber, DeviceNumber, FunNumber, PortNumber);
-
+			"Function Number: %02X\r\n"
+			"Port Number: %02X\r\n", BusNumber, DeviceNumber, FunNumber,
+			PortNumber);
 
 	/* Set up the PCIe header of this Root Complex */
 	XDmaPcie_ReadLocalConfigSpace(XdmaPciePtr,
-					PCIE_CFG_CMD_STATUS_REG, &HeaderData);
+	PCIE_CFG_CMD_STATUS_REG, &HeaderData);
 
 	HeaderData |= (PCIE_CFG_CMD_BUSM_EN | PCIE_CFG_CMD_MEM_EN |
-				PCIE_CFG_CMD_IO_EN | PCIE_CFG_CMD_PARITY |
-							PCIE_CFG_CMD_SERR_EN);
+	PCIE_CFG_CMD_IO_EN | PCIE_CFG_CMD_PARITY |
+	PCIE_CFG_CMD_SERR_EN);
 
 	XDmaPcie_WriteLocalConfigSpace(XdmaPciePtr,
-					PCIE_CFG_CMD_STATUS_REG, HeaderData);
+	PCIE_CFG_CMD_STATUS_REG, HeaderData);
 
 	/*
 	 * Read back local config reg.
@@ -188,10 +180,10 @@ int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId)
 	 */
 
 	XDmaPcie_ReadLocalConfigSpace(XdmaPciePtr,
-					PCIE_CFG_CMD_STATUS_REG, &HeaderData);
+	PCIE_CFG_CMD_STATUS_REG, &HeaderData);
 
 	xil_printf("PCIe Local Config Space is %8X at register"
-					" CommandStatus\r\n", HeaderData);
+			" CommandStatus\r\n", HeaderData);
 
 	/*
 	 * Set up Bus number
@@ -200,17 +192,17 @@ int PcieInitRootComplex(XDmaPcie *XdmaPciePtr, u16 DeviceId)
 	HeaderData = PCIE_CFG_PRIM_SEC_BUS;
 
 	XDmaPcie_WriteLocalConfigSpace(XdmaPciePtr,
-					PCIE_CFG_PRI_SEC_BUS_REG, HeaderData);
+	PCIE_CFG_PRI_SEC_BUS_REG, HeaderData);
 
 	/*
 	 * Read back local config reg.
 	 * to verify the write.
 	 */
 	XDmaPcie_ReadLocalConfigSpace(XdmaPciePtr,
-					PCIE_CFG_PRI_SEC_BUS_REG, &HeaderData);
+	PCIE_CFG_PRI_SEC_BUS_REG, &HeaderData);
 
 	xil_printf("PCIe Local Config Space is %8X at register "
-					"Prim Sec. Bus\r\n", HeaderData);
+			"Prim Sec. Bus\r\n", HeaderData);
 
 	/* Now it is ready to function */
 

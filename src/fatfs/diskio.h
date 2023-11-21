@@ -1,6 +1,6 @@
 /*-----------------------------------------------------------------------/
-/  Low level disk interface modlue include file   (C)ChaN, 2019          /
-/-----------------------------------------------------------------------*/
+ /  Low level disk interface modlue include file   (C)ChaN, 2019          /
+ /-----------------------------------------------------------------------*/
 
 #ifndef _DISKIO_DEFINED
 #define _DISKIO_DEFINED
@@ -10,35 +10,32 @@ extern "C" {
 #endif
 
 /* Status of Disk Functions */
-typedef BYTE	DSTATUS;
+typedef BYTE DSTATUS;
 
 /* Results of Disk Functions */
 typedef enum {
-	RES_OK = 0,		/* 0: Successful */
-	RES_ERROR,		/* 1: R/W Error */
-	RES_WRPRT,		/* 2: Write Protected */
-	RES_NOTRDY,		/* 3: Not Ready */
-	RES_PARERR		/* 4: Invalid Parameter */
+	RES_OK = 0, /* 0: Successful */
+	RES_ERROR, /* 1: R/W Error */
+	RES_WRPRT, /* 2: Write Protected */
+	RES_NOTRDY, /* 3: Not Ready */
+	RES_PARERR /* 4: Invalid Parameter */
 } DRESULT;
-
 
 /*---------------------------------------*/
 /* Prototypes for disk control functions */
 
-
-DSTATUS disk_initialize (BYTE pdrv);
-DSTATUS disk_status (BYTE pdrv);
-DRESULT disk_read (BYTE pdrv, BYTE* buff, LBA_t sector, UINT count);
-DRESULT disk_write (BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count);
-DRESULT disk_ioctl (BYTE pdrv, BYTE cmd, void* buff);
-
+DSTATUS disk_initialize(BYTE pdrv);
+DSTATUS disk_status(BYTE pdrv);
+DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count);
+DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count);
+DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void* buff);
+DWORD get_fattime(void);
 
 /* Disk Status Bits (DSTATUS) */
 
 #define STA_NOINIT		0x01	/* Drive not initialized */
 #define STA_NODISK		0x02	/* No medium in the drive */
 #define STA_PROTECT		0x04	/* Write protected */
-
 
 /* Command code for disk_ioctrl fucntion */
 

@@ -1,35 +1,34 @@
 /*
-Lightweight NVMe Driver
+ Lightweight NVMe Driver
 
-Copyright (C) 2021 by Shane W. Colton
+ Copyright (C) 2021 by Shane W. Colton
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in
+ all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-*/
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ THE SOFTWARE.
+ */
 
 // Include Headers -----------------------------------------------------------------------------------------------------
-
 #include "nvme.h"
 #include "nvme_priv.h"
-// #include "xil_cache.h"
+#include "xil_cache.h"
 // #include "xil_mmu.h"
 #include "xil_io.h"
-#include "xtime_l.h"
+#include "xtime_clone.h"
 
 // Private Pre-Processor Definitions -----------------------------------------------------------------------------------
 
@@ -73,42 +72,44 @@ int nvmeCheckTimeout(XTime tStart, u32 tTimeout_ms);
 
 // Private Global Variables --------------------------------------------------------------------------------------------
 
-// AXI/PCIE Bridge and Device Registers
-u32 * regPhyStatusControl =      (u32 *)(0x500000144);
-u32 * regRootPortStatusControl = (u32 *)(0x500000148);
-u32 * regDeviceClassCode = 		 (u32 *)(0x500100008);	// This u32 includes Class Code (31:8) and Revision ID (7:0).
+// AXI/PCIE Bridge and Device Registers (AXI Lite Address Space)
+u32 * regPhyStatusControl = (u32 *) (XPAR_AXI_PCIE_0_BASEADDR + 0x00000144);
+u32 * regRootPortStatusControl = (u32 *) (XPAR_AXI_PCIE_0_BASEADDR + 0x00000148);
+u32 * regDeviceClassCode = (u32 *) (XPAR_AXI_PCIE_0_BASEADDR + 0x00100008);	// This u32 includes Class Code (31:8) and Revision ID (7:0).
 
 // NVME Controller Registers, via AXI BAR
 // Root Port Bridge must be enabled through regRootPortStatusControl for R/W access.
-u64 * regCAP =     (u64 *)(0xB0000000);					// Controller Capabilities
-u32 * regCC =      (u32 *)(0xB0000014);					// Controller Configuration
-u32 * regCSTS =    (u32 *)(0xB000001C);					// Controller Status
-u32 * regAQA =     (u32 *)(0xB0000024);					// Admin Queue Attributes
-u64 * regASQ =     (u64 *)(0xB0000028);					// Admin Submission Queue Base Address
-u64 * regACQ =     (u64 *)(0xB0000030);					// Admin Completion Queue Base Address
-u32 * regSQ0TDBL = (u32 *)(0xB0001000);					// Admin Submission Queue Tail Doorbell
-u32 * regCQ0HDBL = (u32 *)(0xB0001004);					// Admin Completion Queue Head Doorbell
-u32 * regSQ1TDBL = (u32 *)(0xB0001008);					// I/O Submission Queue Tail Doorbell
-u32 * regCQ1HDBL = (u32 *)(0xB000100C);					// I/O Completion Queue Head Doorbell
+u64 * regCAP = (u64 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00000000);	// Controller Capabilities
+u32 * regCC = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00000014);// Controller Configuration
+u32 * regCSTS = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x0000001C);// Controller Status
+u32 * regAQA = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00000024);	// Admin Queue Attributes
+u64 * regASQ = (u64 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00000028);	// Admin Submission Queue Base Address
+u64 * regACQ = (u64 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00000030);	// Admin Completion Queue Base Address
+u32 * regSQ0TDBL = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00001000);	// Admin Submission Queue Tail Doorbell
+u32 * regCQ0HDBL = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00001004);	// Admin Completion Queue Head Doorbell
+u32 * regSQ1TDBL = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x00001008);	// I/O Submission Queue Tail Doorbell
+u32 * regCQ1HDBL = (u32 *) (XPAR_AXI_PCIE_0_AXIBAR2PCIEBAR_0 + 0x0000100C);	// I/O Completion Queue Head Doorbell
 
 // Submission and Completion Queues
 // Must be page-aligned at least large enough to fit the queue sizes defined above.
-sqe_prp_type * asq =  (sqe_prp_type *)(0x10000000);		// Admin Submission Queue
-cqe_type * acq =          (cqe_type *)(0x10001000);		// Admin Completion Queue
-sqe_prp_type * iosq = (sqe_prp_type *)(0x10002000);		// I/O Submission Queue
-cqe_type * iocq =         (cqe_type *)(0x10003000);		// I/O Completion Queue
+sqe_prp_type * asq =  (sqe_prp_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00000000);		// Admin Submission Queue
+cqe_type * acq =          (cqe_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00001000);		// Admin Completion Queue
+sqe_prp_type * iosq = (sqe_prp_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00002000);		// I/O Submission Queue
+cqe_type * iocq =         (cqe_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00003000);		// I/O Completion Queue
 
 // Identify Structures
-idController_type * idController = (idController_type *)(0x10004000);
-idNamespace_type * idNamespace = (idNamespace_type *)(0x10005000);
-logSMARTHealth_type * logSMARTHealth = (logSMARTHealth_type *)(0x10006000);
+idController_type * idController = (idController_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00004000);
+idNamespace_type * idNamespace   = (idNamespace_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00005000);
+logSMARTHealth_type * logSMARTHealth = (logSMARTHealth_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR	+ 0x00006000);
 
 // Dataset Management Ranges (256 * 16B = 4096B)
-dsmRange_type * dsmRange = (dsmRange_type *)(0x10007000);
+dsmRange_type * dsmRange =
+		(dsmRange_type *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR + 0x00007000);
 
 // Heap space for PRP lists for IO Transfers.
 // Heap size is (IOSQ_SIZE + 1) * DDR_PAGE_SIZE.
-u64 * prpListHeap = (u64 *)(0x10008000);
+u64 * prpListHeap = (u64 *) (XPAR_DDR4_0_C0_DDR4_MEMORY_MAP_BASEADDR
+		+ 0x00008000);
 
 descPowerState_type descPowerState[32];
 
@@ -132,63 +133,69 @@ u16 io_cid_last_completed = 0xFFFF;
 
 // Public Function Definitions -----------------------------------------------------------------------------------------
 
-int nvmeInit(void)
-{
+int nvmeInit(void) {
 	nvmeStatus = NVME_OK;
 
 	nvmeStatus |= nvmeInitBridge();
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	nvmeInitAdminQueue();
 
-	nvmeStatus |= nvmeInitController(1000);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	nvmeStatus |= nvmeInitController(10);
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
-	nvmeStatus |= nvmeIdentifyController(10);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	nvmeStatus |= nvmeIdentifyController(10); // will throw a NVME_ERROR_ACQ_TIMEOUT
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	nvmeStatus |= nvmeIdentifyNamespace(10);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	// nvmeStatus |= nvmeSetPowerState(0, WORKLOAD_SEQUENTIAL, 1000);
 	// if(nvmeStatus != NVME_OK) { return nvmeStatus; }
 
 	nvmeStatus |= nvmeCreateIOQueues(10);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	nvmeGetMetrics();
 
 	return nvmeStatus;
 }
 
-int nvmeGetStatus(void)
-{
+int nvmeGetStatus(void) {
 	return nvmeStatus;
 }
 
-u64 nvmeGetLBACount(void)
-{
-	if(nvmeStatus == NVME_OK)
-	{ return idNamespace->NSZE; }
-	else
-	{ return 0; }
+u64 nvmeGetLBACount(void) {
+	if (nvmeStatus == NVME_OK) {
+		return idNamespace->NSZE;
+	} else {
+		return 0;
+	}
 }
 
-u16 nvmeGetLBASize(void)
-{
-	if(nvmeStatus == NVME_OK)
-	{ return (1 << lba_exp); }
-	else
-	{ return 0; }
+u16 nvmeGetLBASize(void) {
+	if (nvmeStatus == NVME_OK) {
+		return (1 << lba_exp);
+	} else {
+		return 0;
+	}
 }
 
-int nvmeGetMetrics(void)
-{
+int nvmeGetMetrics(void) {
 	return nvmeGetSMARTHealth();
 }
 
-float nvmeGetTemp(void)
-{
+float nvmeGetTemp(void) {
 	// TO-DO: Move to calibration.
 	static float nvmeDN0 = 0.0f;
 	static float nvmeT0 = -273.15f;
@@ -196,28 +203,28 @@ float nvmeGetTemp(void)
 
 	static float nvmeTf = -100.0f;
 
-	float nvmeT = (logSMARTHealth->Composite_Temperature - nvmeDN0) * nvmeTSlope + nvmeT0;
-	if(nvmeTf == -100.0f)
-	{
+	float nvmeT = (logSMARTHealth->Composite_Temperature - nvmeDN0) * nvmeTSlope
+			+ nvmeT0;
+	if (nvmeTf == -100.0f) {
 		nvmeTf = nvmeT;
-	}
-	else
-	{
+	} else {
 		nvmeTf = 0.95f * nvmeTf + 0.05f * nvmeT;
 	}
 
 	return nvmeTf;
 }
 
-int nvmeWrite(const u8 * srcByte, u64 destLBA, u32 numLBA)
-{
+int nvmeWrite(const u8 * srcByte, u64 destLBA, u32 numLBA) {
 	sqe_prp_type sqe;
 	int nLBA = numLBA;
 	int nPRP;
 	int offset;
 	u64 * prpList = prpListHeap + ((io_cid & IOSQ_SIZE) * (DDR_PAGE_SIZE >> 3));
 
-	if ((u64) srcByte & 0x3) { return 1; } 	// Must be DWORD-aligned!
+	// Must be DWORD-aligned!
+	if ((u64) srcByte & 0x3) {
+		return 1;
+	}
 
 	memset(&sqe, 0, sizeof(sqe_prp_type));
 	sqe.CID = io_cid;
@@ -233,23 +240,18 @@ int nvmeWrite(const u8 * srcByte, u64 destLBA, u32 numLBA)
 	nLBA -= (DDR_PAGE_SIZE - offset) >> lba_exp;
 
 	// If there is more data to transfer...
-	if(nLBA > 0)
-	{
+	if (nLBA > 0) {
 		// Move the source pointer to its page boundary.
 		srcByte -= (u64) offset;
 
 		nPRP = ((nLBA - 1) >> (DDR_PAGE_EXP - lba_exp)) + 1;
-		if(nPRP > 1)
-		{
+		if (nPRP > 1) {
 			// 2 or more PRPs remaining, use a list.
 			sqe.PRP2 = (u64) prpList;
-			for(int p = 1; p <= nPRP; p++)
-			{
-				prpList[p-1] = (u64)(srcByte + (p << DDR_PAGE_EXP));
+			for (int p = 1; p <= nPRP; p++) {
+				prpList[p - 1] = (u64) (srcByte + (p << DDR_PAGE_EXP));
 			}
-		}
-		else
-		{
+		} else {
 			// 1 PRP remaining, fits in the command itself.
 			sqe.PRP2 = (u64) (srcByte + (1 << DDR_PAGE_EXP));
 		}
@@ -260,8 +262,7 @@ int nvmeWrite(const u8 * srcByte, u64 destLBA, u32 numLBA)
 	return 0;
 }
 
-int nvmeFlush()
-{
+int nvmeFlush() {
 	sqe_prp_type sqe;
 	XTime tStart;
 	XTime_GetTime(&tStart);
@@ -276,15 +277,16 @@ int nvmeFlush()
 	return 0;
 }
 
-int nvmeRead(u8 * destByte, u64 srcLBA, u32 numLBA)
-{
+int nvmeRead(u8 * destByte, u64 srcLBA, u32 numLBA) {
 	sqe_prp_type sqe;
 	int nLBA = numLBA;
 	int nPRP;
 	int offset;
 	u64 * prpList = prpListHeap + ((io_cid & IOSQ_SIZE) * (DDR_PAGE_SIZE >> 3));
 
-	if ((u64) destByte & 0x3) { return 1; } 	// Must be DWORD-aligned!
+	if ((u64) destByte & 0x3) {
+		return 1;
+	} 	// Must be DWORD-aligned!
 
 	memset(&sqe, 0, sizeof(sqe_prp_type));
 	sqe.CID = io_cid;
@@ -300,23 +302,18 @@ int nvmeRead(u8 * destByte, u64 srcLBA, u32 numLBA)
 	nLBA -= (DDR_PAGE_SIZE - offset) >> lba_exp;
 
 	// If there is more data to transfer...
-	if(nLBA > 0)
-	{
+	if (nLBA > 0) {
 		// Move the destination pointer to its page boundary.
 		destByte -= (u64) offset;
 
 		nPRP = ((nLBA - 1) >> (DDR_PAGE_EXP - lba_exp)) + 1;
-		if(nPRP > 1)
-		{
+		if (nPRP > 1) {
 			// 2 or more PRPs remaining, use a list.
 			sqe.PRP2 = (u64) prpList;
-			for(int p = 1; p <= nPRP; p++)
-			{
-				prpList[p-1] = (u64)(destByte + (p << DDR_PAGE_EXP));
+			for (int p = 1; p <= nPRP; p++) {
+				prpList[p - 1] = (u64) (destByte + (p << DDR_PAGE_EXP));
 			}
-		}
-		else
-		{
+		} else {
 			// 1 PRP remaining, fits in the command itself.
 			sqe.PRP2 = (u64) (destByte + (1 << DDR_PAGE_EXP));
 		}
@@ -327,8 +324,7 @@ int nvmeRead(u8 * destByte, u64 srcLBA, u32 numLBA)
 	return 0;
 }
 
-int nvmeServiceIOCompletions(u16 maxCompletions)
-{
+int nvmeServiceIOCompletions(u16 maxCompletions) {
 	u16 numCompletions;
 	cqe_type cqeLastCompleted;
 
@@ -337,13 +333,11 @@ int nvmeServiceIOCompletions(u16 maxCompletions)
 	return numCompletions;
 }
 
-u16 nvmeGetIOSlip(void)
-{
-	return (u16)(io_cid - io_cid_last_completed - 1);
+u16 nvmeGetIOSlip(void) {
+	return (u16) (io_cid - io_cid_last_completed - 1);
 }
 
-int nvmeTrim(u64 startLBA, u32 numLBA)
-{
+int nvmeTrim(u64 startLBA, u32 numLBA) {
 	sqe_prp_type sqe;
 
 	// Use a single range.
@@ -367,10 +361,13 @@ int nvmeTrim(u64 startLBA, u32 numLBA)
 
 // Private Function Definitions ----------------------------------------------------------------------------------------
 
-int nvmeInitBridge(void)
-{
-	if(*regPhyStatusControl != PHY_OK) { return NVME_ERROR_PHY; }
-	if((*regDeviceClassCode >> 8) != CLASS_CODE_OK) { return NVME_ERROR_DEV_CLASS; }
+int nvmeInitBridge(void) {
+	if (*regPhyStatusControl != PHY_OK) {
+		return NVME_ERROR_PHY;
+	}
+	if ((*regDeviceClassCode >> 8) != CLASS_CODE_OK) {
+		return NVME_ERROR_DEV_CLASS;
+	}
 
 	// TO-DO: Additional device-level checks, e.g. that we are in Power State D0.
 	// TO-DO: BAR setup. Note that we have AXI 0xA0000000-0xAFFFFFFF mapped to PCIe 0x00000000-0x0FFFFFFF.
@@ -380,15 +377,13 @@ int nvmeInitBridge(void)
 	return NVME_OK;
 }
 
-void nvmeInitAdminQueue(void)
-{
+void nvmeInitAdminQueue(void) {
 	*regAQA = (ACQ_SIZE << 16) | ASQ_SIZE;
-	*regASQ = (u64) asq;
-	*regACQ = (u64) acq;
+	*regASQ = (u32) asq;
+	*regACQ = (u32) acq;
 }
 
-int nvmeInitController(u32 tTimeout_ms)
-{
+int nvmeInitController(u32 tTimeout_ms) {
 	XTime tStart;
 	u64 capability;
 
@@ -408,20 +403,23 @@ int nvmeInitController(u32 tTimeout_ms)
 
 	// Memory Page Size: 4KiB (Minimum)
 	capability = (*regCAP & REG_CAP_MPSMIN_Msk) >> REG_CAP_MPSMIN_Pos;
-	if(capability > 0) { return NVME_ERROR_MIN_PAGE_SIZE; }
+	if (capability > 0) {
+		return NVME_ERROR_MIN_PAGE_SIZE;
+	}
 	*regCC &= ~REG_CC_MPS_Msk;
 	*regCC |= (0x0) << REG_CC_MPS_Pos;
 
 	// I/O Command Set: NVM Command Set
 	capability = (*regCAP & REG_CAP_CCS_Msk) >> REG_CAP_CCS_Pos;
-	if((capability & 0x1) == 0) { return NVME_ERROR_COMMAND_SET;}
+	if ((capability & 0x1) == 0) {
+		return NVME_ERROR_COMMAND_SET;
+	}
 	*regCC &= ~REG_CC_CSS_Msk;
 	*regCC |= (0x0) << REG_CC_CCS_Pos;
 
 	// Doorbell Stride: Realign Pointers if Necessary
 	capability = (*regCAP & REG_CAP_DSTRD_Msk) >> REG_CAP_DSTRD_Pos;
-	if(capability > 0)
-	{
+	if (capability > 0) {
 		regCQ0HDBL = regSQ0TDBL + 1 * (1 << (2 + capability));
 		regSQ1TDBL = regSQ0TDBL + 2 * (1 << (2 + capability));
 		regCQ1HDBL = regSQ0TDBL + 3 * (1 << (2 + capability));
@@ -438,17 +436,16 @@ int nvmeInitController(u32 tTimeout_ms)
 
 	// Wait for Controller Ready with Timeout
 	XTime_GetTime(&tStart);
-	do
-	{
-		if(nvmeCheckTimeout(tStart, tTimeout_ms)) { return NVME_ERROR_CSTS_RDY_TIMEOUT; }
-	}
-	while((*regCSTS & REG_CSTS_RDY) == 0);
+	do {
+		if (nvmeCheckTimeout(tStart, tTimeout_ms)) {
+			return NVME_ERROR_CSTS_RDY_TIMEOUT;
+		}
+	} while ((*regCSTS & REG_CSTS_RDY) == 0);
 
 	return NVME_OK;
 }
 
-int nvmeIdentifyController(u32 tTimeout_ms)
-{
+int nvmeIdentifyController(u32 tTimeout_ms) {
 	u32 nvmeStatus = NVME_OK;
 	sqe_prp_type sqe;
 	cqe_type cqe;
@@ -457,21 +454,26 @@ int nvmeIdentifyController(u32 tTimeout_ms)
 	memset(&sqe, 0, sizeof(sqe_prp_type));
 	sqe.CID = admin_cid;
 	sqe.OPC = 0x06;
-	sqe.PRP1 = (u64) idController;
+	sqe.PRP1 = (u32) idController;
 	sqe.CDW10 = 0x00000001;
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, tTimeout_ms);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
-	if (idController->SQES != 0x66) { return NVME_ERROR_QUEUE_TYPE; }
-	if (idController->CQES != 0x44) { return NVME_ERROR_QUEUE_TYPE; }
+	if (idController->SQES != 0x66) {
+		return NVME_ERROR_QUEUE_TYPE;
+	}
+	if (idController->CQES != 0x44) {
+		return NVME_ERROR_QUEUE_TYPE;
+	}
 
 	nvmeParsePowerStates();
 
 	return NVME_OK;
 }
 
-int nvmeIdentifyNamespace(u32 tTimeout_ms)
-{
+int nvmeIdentifyNamespace(u32 tTimeout_ms) {
 	u32 nvmeStatus = NVME_OK;
 	sqe_prp_type sqe;
 	cqe_type cqe;
@@ -483,7 +485,9 @@ int nvmeIdentifyNamespace(u32 tTimeout_ms)
 	sqe.PRP1 = (u64) idNamespace;
 	sqe.CDW10 = 0x00000002;
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, tTimeout_ms);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	// Take the first NSID on the list, just in case it's not NSID 1.
 	nsid = *(u32 *) ((u64) idNamespace);
@@ -496,17 +500,20 @@ int nvmeIdentifyNamespace(u32 tTimeout_ms)
 	sqe.PRP1 = (u64) idNamespace;
 	sqe.CDW10 = 0x00000000;
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, tTimeout_ms);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	lba_exp = (idNamespace->LBAF[idNamespace->FLBAS]) >> 16;
-	if((lba_exp < 9) || (lba_exp > 12)) { return NVME_ERROR_LBA_SIZE; }
+	if ((lba_exp < 9) || (lba_exp > 12)) {
+		return NVME_ERROR_LBA_SIZE;
+	}
 	lba_size = (1 << lba_exp);
 
 	return NVME_OK;
 }
 
-int nvmeSetPowerState(u8 PS, u8 WH, u32 tTimeout_ms)
-{
+int nvmeSetPowerState(u8 PS, u8 WH, u32 tTimeout_ms) {
 	u32 nvmeStatus = NVME_OK;
 	sqe_prp_type sqe;
 	cqe_type cqe;
@@ -517,21 +524,21 @@ int nvmeSetPowerState(u8 PS, u8 WH, u32 tTimeout_ms)
 	sqe.NSID = nsid;
 	sqe.CDW10 = 0x02;
 	sqe.CDW11 = (PS & 0x1F);
-	if(PS == 0)
-	{
+	if (PS == 0) {
 		// Supply a workload hint only for PS0. TO-DO: Supply for all operational power states.
 		sqe.CDW11 |= (WH & 0x7) << 5;
 	}
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, tTimeout_ms);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	// Not checking for Power State in the CQE because it may indicate the current state rather than the target state.
 
 	return NVME_OK;
 }
 
-int nvmeCreateIOQueues(u32 tTimeout_ms)
-{
+int nvmeCreateIOQueues(u32 tTimeout_ms) {
 	u32 nvmeStatus = NVME_OK;
 	sqe_prp_type sqe;
 	cqe_type cqe;
@@ -544,8 +551,12 @@ int nvmeCreateIOQueues(u32 tTimeout_ms)
 	sqe.CDW10 = (IOCQ_SIZE << 16) | 0x0001;
 	sqe.CDW11 = 0x00000001;
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, tTimeout_ms);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
-	if(cqe.SF_P >> 1) { return NVME_ERROR_QUEUE_CREATION; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
+	if (cqe.SF_P >> 1) {
+		return NVME_ERROR_QUEUE_CREATION;
+	}
 
 	// Create I/O Submission Queue
 	memset(&sqe, 0, sizeof(sqe_prp_type));
@@ -555,14 +566,17 @@ int nvmeCreateIOQueues(u32 tTimeout_ms)
 	sqe.CDW10 = (IOSQ_SIZE << 16) | 0x0001;
 	sqe.CDW11 = 0x00010001;
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, tTimeout_ms);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
-	if(cqe.SF_P >> 1) { return NVME_ERROR_QUEUE_CREATION; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
+	if (cqe.SF_P >> 1) {
+		return NVME_ERROR_QUEUE_CREATION;
+	}
 
 	return NVME_OK;
 }
 
-int nvmeGetSMARTHealth(void)
-{
+int nvmeGetSMARTHealth(void) {
 	u32 nvmeStatus = NVME_OK;
 	sqe_prp_type sqe;
 	cqe_type cqe;
@@ -575,71 +589,96 @@ int nvmeGetSMARTHealth(void)
 	sqe.PRP1 = (u64) logSMARTHealth;
 	sqe.CDW10 = 0x007F0002;	// 128DWORD (512B) of Log Identifier 0x02
 	nvmeStatus = nvmeAdminCommand(&sqe, &cqe, 0);
-	if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+	if (nvmeStatus != NVME_OK) {
+		return nvmeStatus;
+	}
 
 	return NVME_OK;
 }
 
-void nvmeParsePowerStates(void)
-{
+void nvmeParsePowerStates(void) {
 	u32 powerScale;
 	u64 psBaseAddress;
 
-	for(int i = 0; i <= idController->NPSS; i++)
-	{
-		psBaseAddress = (u64)(idController->PSD0) + 32*i;
+	for (int i = 0; i <= idController->NPSS; i++) {
+		psBaseAddress = (u64) (idController->PSD0) + 32 * i;
 
 		// Max Power
-		descPowerState[i].pMax = (float)(*(u16 *)(psBaseAddress + PSD_MXPS_Offset));
-		powerScale = ((*(u32 *)(psBaseAddress + PSD_MXPS_Offset)) & PSD_MXPS_Msk) >> PSD_MXPS_Pos;
-		switch(powerScale)
-		{
-			case 1: descPowerState[i].pMax *= 0.0001f; break;
-			default: descPowerState[i].pMax *= 0.01f; break;
+		descPowerState[i].pMax = (float) (*(u16 *) (psBaseAddress
+				+ PSD_MXPS_Offset));
+		powerScale = ((*(u32 *) (psBaseAddress + PSD_MXPS_Offset))
+				& PSD_MXPS_Msk) >> PSD_MXPS_Pos;
+		switch (powerScale) {
+		case 1:
+			descPowerState[i].pMax *= 0.0001f;
+			break;
+		default:
+			descPowerState[i].pMax *= 0.01f;
+			break;
 		}
 
 		// Idle Power
-		descPowerState[i].pIdle = (float)(*(u16 *)(psBaseAddress + PSD_IPS_Offset));
-		powerScale = ((*(u32 *)(psBaseAddress + PSD_IPS_Offset)) & PSD_IPS_Msk) >> PSD_IPS_Pos;
-		switch(powerScale)
-		{
-		case 1: descPowerState[i].pIdle *= 0.0001f; break;
-		case 2: descPowerState[i].pIdle *= 0.01f; break;
-		default: descPowerState[i].pIdle *= 0.0f; break;
+		descPowerState[i].pIdle = (float) (*(u16 *) (psBaseAddress
+				+ PSD_IPS_Offset));
+		powerScale = ((*(u32 *) (psBaseAddress + PSD_IPS_Offset)) & PSD_IPS_Msk)
+				>> PSD_IPS_Pos;
+		switch (powerScale) {
+		case 1:
+			descPowerState[i].pIdle *= 0.0001f;
+			break;
+		case 2:
+			descPowerState[i].pIdle *= 0.01f;
+			break;
+		default:
+			descPowerState[i].pIdle *= 0.0f;
+			break;
 		}
 
 		// Active Power
-		descPowerState[i].pActive = (float)(*(u16 *)(psBaseAddress + PSD_APS_Offset));
-		powerScale = ((*(u32 *)(psBaseAddress + PSD_APS_Offset)) & PSD_IPS_Msk) >> PSD_IPS_Pos;
-		switch(powerScale)
-		{
-		case 1: descPowerState[i].pActive *= 0.0001f; break;
-		case 2: descPowerState[i].pActive *= 0.01f; break;
-		default: descPowerState[i].pActive *= 0.0f; break;
+		descPowerState[i].pActive = (float) (*(u16 *) (psBaseAddress
+				+ PSD_APS_Offset));
+		powerScale = ((*(u32 *) (psBaseAddress + PSD_APS_Offset)) & PSD_IPS_Msk)
+				>> PSD_IPS_Pos;
+		switch (powerScale) {
+		case 1:
+			descPowerState[i].pActive *= 0.0001f;
+			break;
+		case 2:
+			descPowerState[i].pActive *= 0.01f;
+			break;
+		default:
+			descPowerState[i].pActive *= 0.0f;
+			break;
 		}
 
 		// Entry and Exit Times
-		descPowerState[i].tEnter_us = *(u32 *)(psBaseAddress + PSD_ENLAT_Offset);
-		descPowerState[i].tExit_us = *(u32 *)(psBaseAddress + PSD_EXLAT_Offset);
+		descPowerState[i].tEnter_us =
+				*(u32 *) (psBaseAddress + PSD_ENLAT_Offset);
+		descPowerState[i].tExit_us =
+				*(u32 *) (psBaseAddress + PSD_EXLAT_Offset);
 
 		// Other Fields
-		descPowerState[i].NOPS = ((*(u32 *)(psBaseAddress + PSD_NOPS_Offset)) & PSD_NOPS_Msk) >> PSD_NOPS_Pos;
-		descPowerState[i].RRT = ((*(u32 *)(psBaseAddress + PSD_RXX_Offset)) & PSD_RRT_Msk) >> PSD_RRT_Pos;
-		descPowerState[i].RRL = ((*(u32 *)(psBaseAddress + PSD_RXX_Offset)) & PSD_RRL_Msk) >> PSD_RRL_Pos;
-		descPowerState[i].RWT = ((*(u32 *)(psBaseAddress + PSD_RXX_Offset)) & PSD_RWT_Msk) >> PSD_RWT_Pos;
-		descPowerState[i].RWL = ((*(u32 *)(psBaseAddress + PSD_RXX_Offset)) & PSD_RWL_Msk) >> PSD_RWL_Pos;
-		descPowerState[i].APW = ((*(u32 *)(psBaseAddress + PSD_APW_Offset)) & PSD_APW_Msk) >> PSD_APW_Pos;
+		descPowerState[i].NOPS = ((*(u32 *) (psBaseAddress + PSD_NOPS_Offset))
+				& PSD_NOPS_Msk) >> PSD_NOPS_Pos;
+		descPowerState[i].RRT = ((*(u32 *) (psBaseAddress + PSD_RXX_Offset))
+				& PSD_RRT_Msk) >> PSD_RRT_Pos;
+		descPowerState[i].RRL = ((*(u32 *) (psBaseAddress + PSD_RXX_Offset))
+				& PSD_RRL_Msk) >> PSD_RRL_Pos;
+		descPowerState[i].RWT = ((*(u32 *) (psBaseAddress + PSD_RXX_Offset))
+				& PSD_RWT_Msk) >> PSD_RWT_Pos;
+		descPowerState[i].RWL = ((*(u32 *) (psBaseAddress + PSD_RXX_Offset))
+				& PSD_RWL_Msk) >> PSD_RWL_Pos;
+		descPowerState[i].APW = ((*(u32 *) (psBaseAddress + PSD_APW_Offset))
+				& PSD_APW_Msk) >> PSD_APW_Pos;
 
 		// Set the idle power state to the first one to indicate NOPS.
-		if((descPowerState[i].NOPS) && (ps_idle == 0))
-		{
+		if ((descPowerState[i].NOPS) && (ps_idle == 0)) {
 			ps_idle = i;
 		}
 	}
 }
 
-int nvmeAdminCommand(const sqe_prp_type * sqe, cqe_type * cqe, u32 tTimeout_ms)
-{
+int nvmeAdminCommand(const sqe_prp_type * sqe, cqe_type * cqe, u32 tTimeout_ms) {
 	u16 admin_cid_wait = admin_cid;
 	u32 nvmeStatus = NVME_OK;
 	XTime tStart;
@@ -648,51 +687,60 @@ int nvmeAdminCommand(const sqe_prp_type * sqe, cqe_type * cqe, u32 tTimeout_ms)
 	nvmeSubmitAdminCommand(sqe);
 
 	// Don't wait for completion if tTimeout_ms == 0.
-	if(tTimeout_ms == 0) { return NVME_OK; }
+	if (tTimeout_ms == 0) {
+		return NVME_OK;
+	}
 
-	do
-	{
+	do {
 		nvmeStatus |= nvmeCompleteAdminCommand(cqe, tTimeout_ms);
-		if(nvmeStatus != NVME_OK) { return nvmeStatus; }
+		if (nvmeStatus != NVME_OK) {
+			return nvmeStatus;
+		}
 
-		if(nvmeCheckTimeout(tStart, tTimeout_ms)) { return NVME_ERROR_ADMIN_COMMAND_TIMEOUT; }
+		if (nvmeCheckTimeout(tStart, tTimeout_ms)) {
+			return NVME_ERROR_ADMIN_COMMAND_TIMEOUT;
+		}
 	} while (cqe->CID != admin_cid_wait);
-
 
 	return NVME_OK;
 }
 
-void nvmeSubmitAdminCommand(const sqe_prp_type * sqe)
-{
+void nvmeSubmitAdminCommand(const sqe_prp_type * sqe) {
 	u64 asq_offset = asq_tail_local * sizeof(sqe_prp_type);
-	memcpy((void *)((u64)asq + asq_offset), sqe, sizeof(sqe_prp_type));
+	// copy SQE to DDR4 memory where PCIE IP has access to it
+	memcpy((void *) ((u32) asq + asq_offset), sqe, sizeof(sqe_prp_type));
 	asq_tail_local = (asq_tail_local + 1) & ASQ_SIZE;
 	admin_cid++;
 
-	isb(); dsb(); // Xil_DCacheFlush();
+	Xil_DCacheFlush()
+	; //isb(); dsb();
 	*regSQ0TDBL = asq_tail_local;
 }
 
 // Blocking Admin Command Completion
-int nvmeCompleteAdminCommand(cqe_type * cqe, u32 tTimeout_ms)
-{
+int nvmeCompleteAdminCommand(cqe_type * cqe, u32 tTimeout_ms) {
 	XTime tStart;
 	cqe_type * cqeTemp;
 	u64 acq_offset = acq_head_local * sizeof(cqe_type);
 
 	XTime_GetTime(&tStart);
-	do
-	{
-		isb(); dsb(); // Xil_DCacheInvalidate();
-		cqeTemp = (cqe_type *)((u64)acq + acq_offset);
+	do {
+		Xil_DCacheInvalidate()
+		; //isb(); dsb(); // Xil_DCacheInvalidate();
+		cqeTemp = (cqe_type *) ((u32) acq + acq_offset);
 
-		if(nvmeCheckTimeout(tStart, tTimeout_ms)) { return NVME_ERROR_ACQ_TIMEOUT; }
-	} while((cqeTemp->SF_P & 0x0001) == acq_phase);
+		if (nvmeCheckTimeout(tStart, tTimeout_ms)) {
+			return NVME_ERROR_ACQ_TIMEOUT;
+		}
+	} while ((cqeTemp->SF_P & 0x0001) == acq_phase);
 
 	acq_head_local = (acq_head_local + 1) & ACQ_SIZE;
-	if(acq_head_local == 0) { acq_phase ^= 0x01; }
+	if (acq_head_local == 0) {
+		acq_phase ^= 0x01;
+	}
 
-	isb(); dsb(); // Xil_DCacheFlush();
+	Xil_DCacheFlush()
+	; // isb(); dsb();
 	*regCQ0HDBL = acq_head_local;
 
 	*cqe = *cqeTemp;
@@ -700,42 +748,45 @@ int nvmeCompleteAdminCommand(cqe_type * cqe, u32 tTimeout_ms)
 	return NVME_OK;
 }
 
-void nvmeSubmitIOCommand(const sqe_prp_type * sqe)
-{
+void nvmeSubmitIOCommand(const sqe_prp_type * sqe) {
 	u64 iosq_offset = iosq_tail_local * sizeof(sqe_prp_type);
-	memcpy((void *)((u64)iosq + iosq_offset), sqe, sizeof(sqe_prp_type));
+	memcpy((void *) ((u64) iosq + iosq_offset), sqe, sizeof(sqe_prp_type));
 	iosq_tail_local = (iosq_tail_local + 1) & IOSQ_SIZE;
 	io_cid++;
 
-	isb(); dsb(); // Xil_DCacheFlush();
+	Xil_DCacheFlush()
+	; // isb(); dsb();
 	*regSQ1TDBL = iosq_tail_local;
 }
 
 // Non-Blocking IO Command Completion
-int nvmeCompleteIOCommands(cqe_type * cqe, u16 nCompletionsMax)
-{
+int nvmeCompleteIOCommands(cqe_type * cqe, u16 nCompletionsMax) {
 	u32 nCompletions = 0;
 	cqe_type * cqeTemp;
 	u64 iocq_offset;
 
-	for(nCompletions = 0; nCompletions < nCompletionsMax; nCompletions++)
-	{
+	for (nCompletions = 0; nCompletions < nCompletionsMax; nCompletions++) {
 		iocq_offset = iocq_head_local * sizeof(cqe_type);
 
-		isb(); dsb(); // Xil_DCacheInvalidate();
-		cqeTemp = (cqe_type *)((u64)iocq + iocq_offset);
+		Xil_DCacheInvalidate()
+		; // isb(); dsb();
+		cqeTemp = (cqe_type *) ((u64) iocq + iocq_offset);
 
-		if((cqeTemp->SF_P & 0x0001) == iocq_phase) { break; }
+		if ((cqeTemp->SF_P & 0x0001) == iocq_phase) {
+			break;
+		}
 
 		io_cid_last_completed = cqeTemp->CID;
 
 		iocq_head_local = (iocq_head_local + 1) & IOCQ_SIZE;
-		if(iocq_head_local == 0) { iocq_phase ^= 0x01; }
+		if (iocq_head_local == 0) {
+			iocq_phase ^= 0x01;
+		}
 	}
 
-	if(nCompletions > 0)
-	{
-		isb(); dsb(); // Xil_DCacheFlush();
+	if (nCompletions > 0) {
+		Xil_DCacheFlush()
+		; // isb(); dsb();
 		*regCQ1HDBL = iocq_head_local;
 	}
 
@@ -744,13 +795,14 @@ int nvmeCompleteIOCommands(cqe_type * cqe, u16 nCompletionsMax)
 	return nCompletions;
 }
 
-int nvmeCheckTimeout(XTime tStart, u32 tTimeout_ms)
-{
+int nvmeCheckTimeout(XTime tStart, u32 tTimeout_ms) {
 	XTime tNow;
 	u64 tElapsed_ms;
 
 	XTime_GetTime(&tNow);
-	tElapsed_ms = (tNow - tStart) / (COUNTS_PER_SECOND / 1000);
+	tElapsed_ms = (tNow - tStart);
+	tElapsed_ms = tElapsed_ms * 1000;
+	tElapsed_ms = tElapsed_ms / COUNTS_PER_SECOND;
 
 	return (tElapsed_ms >= tTimeout_ms);
 }

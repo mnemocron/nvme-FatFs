@@ -7,11 +7,12 @@ NVMe SSD Test Application Main
 #include "nvme.h"
 #include "ff.h"
 #include "diskio.h"
-#include "xtime_l.h"
+#include "xtime_clone.h"
 #include "xil_printf.h"
 #include "xil_cache.h"
-#include "xgpiops.h"
-#include "xuartps.h"
+//#include "xgpiops.h"
+#include "xgpio.h"
+//#include "xuartps.h"
 #include "sleep.h"
 #include <stdio.h>
 
@@ -36,12 +37,14 @@ void diskWriteTest();
 void diskReadTest();
 void fsWriteTest();
 
+#define STR_SIZE 128
+
 // Large data buffer in RAM for write source and read destination.
 u8 * const data = (u8 * const) (0x20000000);
 
 // GPIO Global Variables
-XGpioPs Gpio;
-XGpioPs_Config *gpioConfig;
+XGpio Gpio;
+XGpio_Config *gpioConfig;
 
 int main()
 {
@@ -52,13 +55,13 @@ int main()
     xil_printf("Initializing PCIe and NVMe driver...\r\n");
 
     // Configure PERST# pin and write it low then high to reset SSD.
-    gpioConfig = XGpioPs_LookupConfig(XPAR_XGPIOPS_0_DEVICE_ID);
-    XGpioPs_CfgInitialize(&Gpio, gpioConfig, gpioConfig->BaseAddr);
-    XGpioPs_SetDirectionPin(&Gpio, 78, 1);	// 78 = EMIO 0 = PERST#
-    XGpioPs_SetOutputEnablePin(&Gpio, 78, 1);
-    XGpioPs_WritePin(&Gpio, 78, 0);
+    XTime_Init();
+    gpioConfig = XGpio_LookupConfig(XPAR_GPIO_0_DEVICE_ID);
+    XGpio_CfgInitialize(&Gpio, gpioConfig, gpioConfig->BaseAddress);
+    XGpio_SetDataDirection(&Gpio, 1, 0);
+    XGpio_DiscreteSet(&Gpio, 1, 2); // bit 1 = PERST
     usleep(10000);
-    XGpioPs_WritePin(&Gpio, 78, 1);
+    XGpio_DiscreteClear(&Gpio, 1, 2);
 
     // Wait 100ms then initialize PCIe.
     usleep(100000);
@@ -67,7 +70,7 @@ int main()
 
     // Start NVMe Driver
 	u32 nvmeStatus;
-	char strResult[128];
+	char strResult[STR_SIZE];
     nvmeStatus = nvmeInit();
     if (nvmeStatus == NVME_OK)
     {
@@ -75,7 +78,7 @@ int main()
     }
     else
     {
-    	sprintf(strResult, "NVMe driver failed to initialize. Error Code: %8x\r\n", nvmeStatus);
+    	snprintf(strResult, STR_SIZE, "NVMe driver failed to initialize. Error Code: %8x\r\n", nvmeStatus);
     	xil_printf(strResult);
     	if(nvmeStatus == NVME_ERROR_PHY) {
    			xil_printf("PCIe link must be Gen3 x4 for this example.\r\n");
@@ -165,15 +168,18 @@ void trimWait(u32 trimDelay)
 	if(trimDelay == 0)
 	{
 		xil_printf("Enter S to start test...\r\n");
+	    usleep(100000);
+	    /*
 		do
 		{
 			while(!XUartPs_IsReceiveData(XUartPs_LookupConfig(XPAR_XUARTPS_0_DEVICE_ID)->BaseAddress));
 		} while (XUartPs_RecvByte(XUartPs_LookupConfig(XPAR_XUARTPS_0_DEVICE_ID)->BaseAddress) != 'S');
+		*/
 	}
 
 	while(trimDelay)
 	{
-		sprintf(strWorking, "Waiting after TRIM, %d minutes remaining...\r\n", trimDelay);
+		snprintf(strWorking, STR_SIZE, "Waiting after TRIM, %d minutes remaining...\r\n", trimDelay);
 		xil_printf(strWorking);
 
 		trimDelay--;
@@ -184,7 +190,7 @@ void trimWait(u32 trimDelay)
 // Raw Disk Write Test
 void diskWriteTest()
 {
-	char strWorking[128];
+	char strWorking[STR_SIZE];
 
 	xil_printf("Raw disk write test started.\r\n");
 
@@ -225,7 +231,7 @@ void diskWriteTest()
 
 			totalWrittenGB = (float)((u64)blocksWritten * (u64)BLOCK_SIZE) * 1e-9f;
 
-			sprintf(strWorking, "%8d,%12.3f,%11.3f\r\n", sElapsed, rate, totalWrittenGB);
+			snprintf(strWorking, STR_SIZE, "%8d,%12.3f,%11.3f\r\n", sElapsed, rate, totalWrittenGB);
 			xil_printf(strWorking);
 		}
 
@@ -287,7 +293,7 @@ void diskReadTest()
 
 			totalReadGB = (float)((u64)blocksRead * (u64)BLOCK_SIZE) * 1e-9f;
 
-			sprintf(strWorking, "%8d,%12.3f,%11.3f\r\n", sElapsed, rate, totalReadGB);
+			snprintf(strWorking, STR_SIZE, "%8d,%12.3f,%11.3f\r\n", sElapsed, rate, totalReadGB);
 			xil_printf(strWorking);
 		}
 
@@ -305,7 +311,7 @@ void diskReadTest()
 // File System Write Test
 void fsWriteTest()
 {
-	char strWorking[128];
+	char strWorking[STR_SIZE];
 
 	xil_printf("File system write test started.\r\n");
 	xil_printf("Formatting disk...\r\n");
@@ -340,7 +346,7 @@ void fsWriteTest()
 
 	// Create first file.
 	u32 nFile = 0;
-	sprintf(strWorking, "f%06d.bin\n", nFile);
+	snprintf(strWorking, STR_SIZE, "f%06d.bin\n", nFile);
 	f_open(&fil, strWorking, FA_CREATE_NEW | FA_WRITE);
 
 	// Setup for write test.
@@ -380,7 +386,7 @@ void fsWriteTest()
 
 			totalWrittenGB = (float)((u64)blocksWritten * (u64)BLOCK_SIZE) * 1e-9f;
 
-			sprintf(strWorking, "%8d,%12.3f,%11.3f\r\n", sElapsed, rate, totalWrittenGB);
+			snprintf(strWorking, STR_SIZE, "%8d,%12.3f,%11.3f\r\n", sElapsed, rate, totalWrittenGB);
 			xil_printf(strWorking);
 		}
 
@@ -397,7 +403,7 @@ void fsWriteTest()
 		{
 			f_close(&fil);
 			nFile++;
-			sprintf(strWorking, "f%06d.bin\n", nFile);
+			snprintf(strWorking, STR_SIZE, "f%06d.bin\n", nFile);
 			f_open(&fil, strWorking, FA_CREATE_NEW | FA_WRITE);
 		}
 	}
